@@ -22,7 +22,7 @@ class Project(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
-    requirement_text = Column(Text, nullable=False)
+    # REMOVED requirement_text - no longer needed here!
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -35,6 +35,11 @@ class TestCase(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    
+    # NEW FIELDS - to track which feature/requirement these test cases belong to
+    feature_name = Column(String, nullable=False)  # e.g., "Login", "Signup", "Checkout"
+    requirement_text = Column(Text, nullable=False)  # The original requirement used to generate
+    
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
     type = Column(String, nullable=False)  # functional, negative, boundary, exploratory

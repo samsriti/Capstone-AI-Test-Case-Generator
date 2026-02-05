@@ -25,22 +25,20 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
-# Project schemas
+# Project schemas - SIMPLIFIED!
 class ProjectCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    requirement_text: str
+    # requirement_text REMOVED!
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    requirement_text: Optional[str] = None
 
 class ProjectResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
-    requirement_text: str
     created_at: datetime
     updated_at: datetime
     
@@ -55,9 +53,16 @@ class TestCaseCreate(BaseModel):
     steps: List[str]
     expected_result: str
 
+# NEW - For generating test cases
+class GenerateTestCasesRequest(BaseModel):
+    feature_name: str  # e.g., "Login Feature"
+    requirement_text: str  # The actual requirement
+
 class TestCaseResponse(BaseModel):
     id: int
     project_id: int
+    feature_name: str  # NEW
+    requirement_text: str  # NEW
     title: str
     description: str
     type: str
@@ -70,3 +75,12 @@ class TestCaseResponse(BaseModel):
 
 class ProjectWithTestCases(ProjectResponse):
     test_cases: List[TestCaseResponse] = []
+
+# NEW - Grouped test cases by feature
+class FeatureTestCases(BaseModel):
+    feature_name: str
+    requirement_text: str
+    test_cases: List[TestCaseResponse]
+
+class ProjectWithGroupedTestCases(ProjectResponse):
+    features: List[FeatureTestCases] = []

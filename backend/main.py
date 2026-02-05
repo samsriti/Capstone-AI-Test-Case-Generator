@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from datetime import timedelta
 import json
+from collections import defaultdict
 
 from openai import OpenAI
 import os
@@ -87,11 +88,14 @@ def create_project(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Create a new project (e.g., "Business 1", "E-commerce Platform")
+    No requirement_text needed - you'll add features/test cases later
+    """
     new_project = models.Project(
         user_id=current_user.id,
         name=project.name,
-        description=project.description,
-        requirement_text=project.requirement_text
+        description=project.description
     )
     db.add(new_project)
     db.commit()
@@ -103,15 +107,36 @@ def get_user_projects(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
+    """Get all projects for the current user"""
     projects = db.query(models.Project).filter(models.Project.user_id == current_user.id).all()
     return projects
 
-@app.get("/projects/{project_id}", response_model=schemas.ProjectWithTestCases)
+@app.get("/projects/{project_id}", response_model=schemas.ProjectWithGroupedTestCases)
 def get_project(
     project_id: int,
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Get a project with all test cases grouped by feature
+    Example response:
+    {
+      "id": 1,
+      "name": "Business 1",
+      "features": [
+        {
+          "feature_name": "Login",
+          "requirement_text": "...",
+          "test_cases": [...]
+        },
+        {
+          "feature_name": "Signup",
+          "requirement_text": "...",
+          "test_cases": [...]
+        }
+      ]
+    }
+    """
     project = db.query(models.Project).filter(
         models.Project.id == project_id,
         models.Project.user_id == current_user.id
@@ -120,6 +145,55 @@ def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
+    # Group test cases by feature
+    features_dict = defaultdict(lambda: {"test_cases": [], "requirement_text": ""})
+    
+    for tc in project.test_cases:
+        features_dict[tc.feature_name]["test_cases"].append(tc)
+        features_dict[tc.feature_name]["requirement_text"] = tc.requirement_text
+    
+    # Convert to list of FeatureTestCases
+    features = [
+        {
+            "feature_name": feature_name,
+            "requirement_text": data["requirement_text"],
+            "test_cases": data["test_cases"]
+        }
+        for feature_name, data in features_dict.items()
+    ]
+    
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+        "features": features
+    }
+
+@app.put("/projects/{project_id}", response_model=schemas.ProjectResponse)
+def update_project(
+    project_id: int,
+    project_update: schemas.ProjectUpdate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update project name or description"""
+    project = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.user_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    if project_update.name is not None:
+        project.name = project_update.name
+    if project_update.description is not None:
+        project.description = project_update.description
+    
+    db.commit()
+    db.refresh(project)
     return project
 
 @app.delete("/projects/{project_id}")
@@ -128,6 +202,7 @@ def delete_project(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
+    """Delete a project and all its test cases"""
     project = db.query(models.Project).filter(
         models.Project.id == project_id,
         models.Project.user_id == current_user.id
@@ -145,9 +220,19 @@ def delete_project(
 @app.post("/projects/{project_id}/generate-test-cases")
 async def generate_and_save_test_cases(
     project_id: int,
+    request: schemas.GenerateTestCasesRequest,  # NEW - takes feature_name and requirement_text
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Generate test cases for a specific feature within a project
+    
+    Example request:
+    {
+      "feature_name": "User Login",
+      "requirement_text": "As a user, I want to log in with email and password..."
+    }
+    """
     # Get project
     project = db.query(models.Project).filter(
         models.Project.id == project_id,
@@ -157,8 +242,17 @@ async def generate_and_save_test_cases(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    # Delete existing test cases for this project
-    db.query(models.TestCase).filter(models.TestCase.project_id == project_id).delete()
+    # Check if this feature already has test cases
+    existing_test_cases = db.query(models.TestCase).filter(
+        models.TestCase.project_id == project_id,
+        models.TestCase.feature_name == request.feature_name
+    ).first()
+    
+    if existing_test_cases:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Test cases already exist for feature '{request.feature_name}'. Delete them first or use a different feature name."
+        )
     
     try:
         # Generate test cases with AI
@@ -191,7 +285,7 @@ async def generate_and_save_test_cases(
                 },
                 {
                     "role": "user",
-                    "content": f"Generate test cases for this requirement:\n\n{project.requirement_text}"
+                    "content": f"Generate test cases for this requirement:\n\n{request.requirement_text}"
                 }
             ],
             temperature=0.7,
@@ -202,11 +296,13 @@ async def generate_and_save_test_cases(
         result = response.choices[0].message.content
         test_data = json.loads(result)
         
-        # Save test cases to database
+        # Save test cases to database with feature info
         saved_test_cases = []
         for tc_data in test_data["test_cases"]:
             test_case = models.TestCase(
                 project_id=project_id,
+                feature_name=request.feature_name,  # NEW
+                requirement_text=request.requirement_text,  # NEW
                 title=tc_data["title"],
                 description=tc_data["description"],
                 type=tc_data["type"],
@@ -223,13 +319,69 @@ async def generate_and_save_test_cases(
             db.refresh(tc)
         
         return {
-            "message": "Test cases generated and saved successfully",
+            "message": f"Test cases generated and saved successfully for feature '{request.feature_name}'",
+            "feature_name": request.feature_name,
+            "test_cases_count": len(saved_test_cases),
             "test_cases": [schemas.TestCaseResponse.from_orm(tc) for tc in saved_test_cases]
         }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating test cases: {str(e)}")
 
+@app.get("/projects/{project_id}/features/{feature_name}/test-cases", response_model=List[schemas.TestCaseResponse])
+def get_test_cases_by_feature(
+    project_id: int,
+    feature_name: str,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all test cases for a specific feature"""
+    # Verify project belongs to user
+    project = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.user_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Get test cases for this feature
+    test_cases = db.query(models.TestCase).filter(
+        models.TestCase.project_id == project_id,
+        models.TestCase.feature_name == feature_name
+    ).all()
+    
+    return test_cases
+
+@app.delete("/projects/{project_id}/features/{feature_name}")
+def delete_feature_test_cases(
+    project_id: int,
+    feature_name: str,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete all test cases for a specific feature"""
+    # Verify project belongs to user
+    project = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.user_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Delete test cases for this feature
+    deleted_count = db.query(models.TestCase).filter(
+        models.TestCase.project_id == project_id,
+        models.TestCase.feature_name == feature_name
+    ).delete()
+    
+    db.commit()
+    
+    return {
+        "message": f"Deleted {deleted_count} test cases for feature '{feature_name}'"
+    }
+
 @app.get("/")
 def read_root():
-    return {"message": "AI Test Case Generator API with Auth is running!"}
+    return {"message": "AI Test Case Generator API v2.0 - Feature-based test cases!"}

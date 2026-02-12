@@ -57,8 +57,8 @@ function Signup() {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h1> AI Test Case Generator</h1>
-        <h2>Create Account</h2>
+         <h1>TCGAI</h1>  
+        <h2>Create your account</h2>
         
         <form onSubmit={handleSubmit}>
           <div className="form-group">

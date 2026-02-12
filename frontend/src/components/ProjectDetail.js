@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getProject, deleteFeature } from '../services/api';
 import GenerateTestCases from './GenerateTestCases';
-import { MdDelete } from 'react-icons/md';
+import ConfirmDialog from './ConfirmDialog';  // Import ConfirmDialog
+import { MdDelete, MdSearch } from 'react-icons/md';
+import { useToast } from '../contexts/ToastContext';  // Import useToast
 
 function ProjectDetail() {
   const { projectId } = useParams();
@@ -12,6 +14,13 @@ function ProjectDetail() {
   const [error, setError] = useState('');
   const [showGenerateForm, setShowGenerateForm] = useState(false);
   const [expandedFeatures, setExpandedFeatures] = useState({});
+  const { showToast } = useToast();
+
+  // Search and filter states
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all'); // all, functional, negative, boundary, exploratory
+
+  const [confirmDelete, setConfirmDelete] = useState(null);  // { featureName: string }
 
   useEffect(() => {
     fetchProject();
@@ -37,20 +46,25 @@ function ProjectDetail() {
 
   const handleGenerateSuccess = (data) => {
     setShowGenerateForm(false);
-    fetchProject(); // Refresh project data
-    alert(`✅ Generated ${data.test_cases_count} test cases for "${data.feature_name}"!`);
+    fetchProject();
+    showToast(`Generated ${data.test_cases_count} test cases for "${data.feature_name}"`, 'success');  // Replace alert
   };
 
-  const handleDeleteFeature = async (featureName) => {
-    if (!window.confirm(`Delete all test cases for "${featureName}"?`)) {
-      return;
-    }
+const handleDeleteFeature = async (featureName) => {
+    // Show confirmation dialog instead of window.confirm
+    setConfirmDelete({ featureName });
+  };
+
+  const confirmDeleteFeature = async () => {
+    const featureName = confirmDelete.featureName;
+    setConfirmDelete(null);  // Close dialog
 
     try {
       await deleteFeature(projectId, featureName);
-      fetchProject(); // Refresh
+      fetchProject();
+      showToast(`Deleted all test cases for "${featureName}"`, 'success');
     } catch (err) {
-      alert('Failed to delete feature');
+      showToast('Failed to delete feature', 'error');
     }
   };
 
@@ -112,6 +126,53 @@ function ProjectDetail() {
     return colors[type] || '#667eea';
   };
 
+  // Filter features and test cases based on search and filter
+  const getFilteredFeatures = () => {
+    if (!project?.features) return [];
+
+    return project.features
+      .map(feature => {
+        // Filter test cases by type
+        let filteredTestCases = feature.test_cases;
+        if (filterType !== 'all') {
+          filteredTestCases = filteredTestCases.filter(tc => tc.type === filterType);
+        }
+
+        // Filter by search term
+        if (searchTerm) {
+          const searchLower = searchTerm.toLowerCase();
+          
+          // Check if feature name matches
+          const featureNameMatches = feature.feature_name.toLowerCase().includes(searchLower);
+          const requirementMatches = feature.requirement_text.toLowerCase().includes(searchLower);
+          
+          // Filter test cases that match search
+          const matchingTestCases = filteredTestCases.filter(tc =>
+            tc.title.toLowerCase().includes(searchLower) ||
+            tc.description.toLowerCase().includes(searchLower) ||
+            tc.expected_result.toLowerCase().includes(searchLower) ||
+            tc.steps.some(step => step.toLowerCase().includes(searchLower))
+          );
+
+          // If feature name/requirement matches, show all test cases
+          // Otherwise, only show matching test cases
+          if (featureNameMatches || requirementMatches) {
+            return { ...feature, test_cases: filteredTestCases };
+          } else if (matchingTestCases.length > 0) {
+            return { ...feature, test_cases: matchingTestCases };
+          } else {
+            return null; // Feature doesn't match
+          }
+        }
+
+        return { ...feature, test_cases: filteredTestCases };
+      })
+      .filter(feature => feature !== null && feature.test_cases.length > 0);
+  };
+
+  const filteredFeatures = getFilteredFeatures();
+  const totalFilteredTestCases = filteredFeatures.reduce((sum, f) => sum + f.test_cases.length, 0);
+
   if (loading) {
     return <div className="loading">Loading project...</div>;
   }
@@ -160,7 +221,7 @@ function ProjectDetail() {
           onClick={() => setShowGenerateForm(!showGenerateForm)}
           className="primary-button"
         >
-          {showGenerateForm ? '✖ Cancel' : '➕ Add Feature & Generate Test Cases'}
+          {showGenerateForm ? '✖ Cancel' : ' Add Feature & Generate Test Cases'}
         </button>
         
         {totalTestCases > 0 && (
@@ -186,10 +247,79 @@ function ProjectDetail() {
         </div>
       )}
 
+      {/* Search and Filter Controls */}
+      {project.features && project.features.length > 0 && (
+        <div className="project-detail-controls">
+          <div className="search-box">
+            <MdSearch size={20} className="search-icon" />
+            <input
+              type="text"
+              placeholder="Search features and test cases..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="search-input"
+            />
+            {searchTerm && (
+              <button 
+                onClick={() => setSearchTerm('')}
+                className="clear-search"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="filter-controls">
+            <label>Filter by type:</label>
+            <div className="filter-buttons">
+              <button
+                onClick={() => setFilterType('all')}
+                className={`filter-button ${filterType === 'all' ? 'active' : ''}`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setFilterType('functional')}
+                className={`filter-button ${filterType === 'functional' ? 'active' : ''}`}
+              >
+                Functional
+              </button>
+              <button
+                onClick={() => setFilterType('negative')}
+                className={`filter-button ${filterType === 'negative' ? 'active' : ''}`}
+              >
+                Negative
+              </button>
+              <button
+                onClick={() => setFilterType('boundary')}
+                className={`filter-button ${filterType === 'boundary' ? 'active' : ''}`}
+              >
+                Boundary
+              </button>
+              <button
+                onClick={() => setFilterType('exploratory')}
+                className={`filter-button ${filterType === 'exploratory' ? 'active' : ''}`}
+              >
+                Exploratory
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results Summary */}
+      {(searchTerm || filterType !== 'all') && project.features && project.features.length > 0 && (
+        <div className="results-summary">
+          Showing {totalFilteredTestCases} test case{totalFilteredTestCases !== 1 ? 's' : ''} 
+          {searchTerm && ` matching "${searchTerm}"`}
+          {filterType !== 'all' && ` of type "${filterType}"`}
+        </div>
+      )}
+
       {/* Features List */}
-      {project.features && project.features.length > 0 ? (
+      {filteredFeatures.length > 0 ? (
         <div className="features-list">
-          {project.features.map((feature) => (
+          {filteredFeatures.map((feature) => (
             <div key={feature.feature_name} className="feature-section">
               <div className="feature-header">
                 <div 
@@ -201,7 +331,7 @@ function ProjectDetail() {
                   </span>
                   <h2>{feature.feature_name}</h2>
                   <span className="test-count-badge">
-                    {feature.test_cases.length} test cases
+                    {feature.test_cases.length} test case{feature.test_cases.length !== 1 ? 's' : ''}
                   </span>
                 </div>
                 
@@ -210,7 +340,7 @@ function ProjectDetail() {
                   className="delete-icon-button"
                   title="Delete this feature"
                 >
-                   <MdDelete size={20} />
+                  <MdDelete size={20} />
                 </button>
               </div>
 
@@ -286,10 +416,40 @@ function ProjectDetail() {
         </div>
       ) : (
         <div className="empty-state">
-          <div className="empty-icon">📝</div>
-          <h3>No features yet</h3>
-          <p>Click "Add Feature & Generate Test Cases" to get started!</p>
+          {searchTerm || filterType !== 'all' ? (
+            <>
+              <div className="empty-icon">🔍</div>
+              <h3>No matching test cases found</h3>
+              <p>Try adjusting your search or filter</p>
+              <button 
+                onClick={() => {
+                  setSearchTerm('');
+                  setFilterType('all');
+                }}
+                className="create-button"
+              >
+                Clear Filters
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="empty-icon">📝</div>
+              <h3>No features yet</h3>
+              <p>Click "Add Feature & Generate Test Cases" to get started!</p>
+            </>
+          )}
         </div>
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete Feature"
+          message={`Are you sure you want to delete all test cases for "${confirmDelete.featureName}"? This action cannot be undone.`}
+          confirmText="Delete"
+          cancelText="Cancel"
+          type="danger"
+          onConfirm={confirmDeleteFeature}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
     </div>
   );

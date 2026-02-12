@@ -35,8 +35,8 @@ function Login({ setUser }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h1>AI Test Case Generator</h1>
-        <h2>Login</h2>
+        <h1>TCGAI</h1>  
+        <h2>Sign in to your account</h2>
         
         {error && <div className="error-message">{error}</div>}
         

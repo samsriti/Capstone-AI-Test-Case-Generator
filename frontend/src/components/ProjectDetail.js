@@ -4,7 +4,7 @@ import { getProject, deleteFeature } from '../services/api';
 import GenerateTestCases from './GenerateTestCases';
 import ConfirmDialog from './ConfirmDialog';
 import EditFeatureModal from './EditFeatureModal';
-import { MdDelete, MdEdit, MdSearch } from 'react-icons/md';
+import { MdDelete, MdEdit, MdSearch, MdCompare } from 'react-icons/md';
 import { useToast } from '../contexts/ToastContext';  // Import useToast
 
 function ProjectDetail() {
@@ -233,6 +233,12 @@ const handleDeleteFeature = async (featureName) => {
         
         {totalTestCases > 0 && (
           <div className="export-buttons">
+            <button
+              onClick={() => navigate(`/projects/${projectId}/compare`)}
+              className="export-button compare-button"
+            >
+              <MdCompare size={16} /> Compare
+            </button>
             <button onClick={exportToJSON} className="export-button">
               📄 Export JSON
             </button>

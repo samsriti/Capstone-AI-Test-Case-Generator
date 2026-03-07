@@ -84,6 +84,23 @@ export const deleteFeature = (projectId, featureName) =>
 export const regenerateTestCases = (projectId, featureName, data) =>
   api.put(`/projects/${projectId}/features/${encodeURIComponent(featureName)}/regenerate`, data);
 
+export const previewCompare = (projectId, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return api.post(`/projects/${projectId}/compare/preview`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
+export const uploadAndCompare = (projectId, file, featureMap = {}) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('feature_map', JSON.stringify(featureMap));
+  return api.post(`/projects/${projectId}/compare`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
+
 // ─── Helper functions ─────────────────────────────────────────────────────────
 
 export const setAuthToken = (token) => {

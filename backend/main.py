@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ import schemas
 import auth
 from database import engine, get_db
 from prompt_guard import check_for_prompt_injection, validate_requirement_semantics, wrap_user_content
+import compare as compare_pipeline
 
 load_dotenv()
 
@@ -833,6 +834,240 @@ async def regenerate_feature_test_cases(
         "test_cases": [schemas.TestCaseResponse.model_validate(tc) for tc in saved_test_cases],
         "coverage_summary": coverage_summary,
     }
+
+
+# ============= UPLOAD & COMPARE ENDPOINTS =============
+
+def _load_file(file_obj) -> tuple:
+    """Shared helper: validate extension, read bytes, return (content, ext)."""
+    allowed_ext = {"csv", "json", "txt"}
+    ext = (file_obj.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in allowed_ext:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '.{ext}'. Please upload a CSV, JSON, or TXT file.",
+        )
+    return ext
+
+
+@app.post("/projects/{project_id}/compare/preview",
+          response_model=schemas.ComparePreviewResponse)
+async def compare_preview(
+    project_id: int,
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Stage 1-3 preview: parse the uploaded file, extract unique feature names
+    found in it, and return semantic mapping suggestions against this project's
+    AI-generated features.  The client uses this to show a mapping UI before
+    committing to the full comparison.
+    """
+    project = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.user_id == current_user.id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    ai_cases = db.query(models.TestCase).filter(
+        models.TestCase.project_id == project_id
+    ).all()
+    if not ai_cases:
+        raise HTTPException(
+            status_code=400,
+            detail="This project has no AI-generated test cases yet.",
+        )
+
+    _load_file(file)   # validates extension; raises on bad type
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File exceeds the 5 MB size limit.")
+
+    manual_cases = compare_pipeline.parse_uploaded_file(file.filename or "upload.csv", content)
+    if not manual_cases:
+        raise HTTPException(
+            status_code=400,
+            detail="No test cases could be parsed. Check that the file has a 'title' column.",
+        )
+
+    # Project feature names + their requirement embeddings (for suggestion scoring)
+    features_dict: dict = defaultdict(lambda: {"requirement_text": ""})
+    for tc in ai_cases:
+        features_dict[tc.feature_name]["requirement_text"] = tc.requirement_text
+
+    project_feature_names = list(features_dict.keys())
+    req_texts = [features_dict[f]["requirement_text"] for f in project_feature_names]
+
+    try:
+        feature_embeddings = compare_pipeline.embed_texts(client, req_texts)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Embedding service error: {exc}")
+
+    # Unique hinted feature names from the file
+    unique_hints = sorted({c.hinted_feature for c in manual_cases if c.hinted_feature})
+    has_feature_column = bool(unique_hints)
+
+    suggestions = compare_pipeline.suggest_feature_mapping(
+        uploaded_feature_names      = unique_hints,
+        project_feature_names       = project_feature_names,
+        project_feature_embeddings  = feature_embeddings,
+        openai_client               = client,
+    )
+
+    return {
+        "uploaded_features":  suggestions,
+        "project_features":   project_feature_names,
+        "total_cases":        len(manual_cases),
+        "has_feature_column": has_feature_column,
+    }
+
+
+@app.post("/projects/{project_id}/compare", response_model=schemas.CompareReport)
+async def upload_and_compare(
+    project_id: int,
+    file: UploadFile = File(...),
+    feature_map: str = Form("{}"),   # JSON: {"CSV sub-feature": "Project feature"}
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Full Upload & Compare — seven-stage pipeline.
+
+    feature_map (optional form field): JSON object mapping uploaded feature
+    names to canonical project feature names, as confirmed by the user in
+    the preview/mapping step.
+    """
+    try:
+        confirmed_map: dict = json.loads(feature_map)
+    except Exception:
+        confirmed_map = {}
+
+    project = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.user_id == current_user.id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    ai_cases = db.query(models.TestCase).filter(
+        models.TestCase.project_id == project_id
+    ).all()
+    if not ai_cases:
+        raise HTTPException(
+            status_code=400,
+            detail="This project has no AI-generated test cases yet. "
+                   "Generate test cases for at least one feature before comparing.",
+        )
+
+    # Stage 1: Upload
+    _load_file(file)
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File exceeds the 5 MB size limit.")
+
+    # Stage 2: Normalize
+    manual_cases = compare_pipeline.parse_uploaded_file(file.filename or "upload.csv", content)
+    if not manual_cases:
+        raise HTTPException(
+            status_code=400,
+            detail="No test cases could be parsed from the uploaded file. "
+                   "Check that the file contains a 'title' or 'name' column.",
+        )
+
+    # Apply confirmed feature mapping: translate sub-feature names to parent feature names
+    if confirmed_map:
+        for case in manual_cases:
+            if case.hinted_feature in confirmed_map:
+                case.hinted_feature = confirmed_map[case.hinted_feature]
+
+    # Stage 4: Retrieve AI cases from DB, grouped by feature
+    features_dict: dict = defaultdict(lambda: {"requirement_text": "", "test_cases": []})
+    for tc in ai_cases:
+        features_dict[tc.feature_name]["requirement_text"] = tc.requirement_text
+        features_dict[tc.feature_name]["test_cases"].append(tc)
+
+    feature_names = list(features_dict.keys())
+    req_texts     = [features_dict[f]["requirement_text"] for f in feature_names]
+    manual_texts  = [c.full_text     for c in manual_cases]
+    manual_titles = [c.display_title for c in manual_cases]
+
+    # Stage 5: Embed — one batch for requirement texts + all manual case texts
+    all_texts_to_embed = req_texts + manual_texts
+    try:
+        all_embeddings = compare_pipeline.embed_texts(client, all_texts_to_embed)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Embedding service error: {exc}")
+
+    feature_embeddings = all_embeddings[: len(req_texts)]
+    case_embeddings    = all_embeddings[len(req_texts):]
+
+    # Stage 3: Map each manual case to a feature
+    mapping = compare_pipeline.map_cases_to_features(
+        manual_cases, feature_names, feature_embeddings, case_embeddings
+    )
+
+    # Stages 6 & 7: Match per feature, build report
+    feature_results = []
+    for feat_name in feature_names:
+        feat_ai_cases = features_dict[feat_name]["test_cases"]
+        req_text      = features_dict[feat_name]["requirement_text"]
+
+        mapped_indices     = mapping.get(feat_name, [])
+        feat_manual_titles = [manual_titles[i] for i in mapped_indices]
+        feat_manual_embs   = [case_embeddings[i] for i in mapped_indices]
+
+        # FIX: embed AI cases using title + description (not title alone)
+        # This removes the asymmetry that caused 0 matches.
+        ai_texts = [
+            f"{tc.title}: {tc.description}" if tc.description else tc.title
+            for tc in feat_ai_cases
+        ]
+        ai_display_titles = [tc.title for tc in feat_ai_cases]
+
+        try:
+            ai_embs = compare_pipeline.embed_texts(client, ai_texts) if ai_texts else []
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Embedding service error: {exc}")
+
+        match_result = compare_pipeline.match_cases(
+            feat_manual_titles, feat_manual_embs,
+            ai_display_titles,  ai_embs,
+        )
+
+        n_ai             = len(ai_texts)
+        n_matched        = len(match_result["matched"])
+        n_near_missed_ai = match_result.get("near_missed_ai_count", 0)
+        exact_cov        = round(n_matched / n_ai * 100, 1) if n_ai else 0.0
+        adjusted_cov     = round(
+            (n_matched + n_near_missed_ai * 0.5) / n_ai * 100, 1
+        ) if n_ai else 0.0
+
+        feature_results.append({
+            "feature_name":          feat_name,
+            "requirement_text":      req_text,
+            "ai_cases_count":        n_ai,
+            "manual_cases_count":    len(feat_manual_titles),
+            "near_missed_ai_count":  n_near_missed_ai,
+            "exact_coverage_pct":    exact_cov,
+            "adjusted_coverage_pct": adjusted_cov,
+            "matched":               match_result["matched"],
+            "near_misses":           match_result["near_misses"],
+            "ai_only":               match_result["ai_only"],
+            "manual_only":           match_result["manual_only"],
+            "redundant_pairs":       match_result["redundant_pairs"],
+        })
+
+    unmapped = [manual_titles[i] for i in mapping.get("__unmapped__", [])]
+
+    return compare_pipeline.build_report(
+        project_id            = project_id,
+        project_name          = project.name,
+        feature_results       = feature_results,
+        unmapped_manual_cases = unmapped,
+        total_uploaded        = len(manual_cases),
+    )
 
 
 @app.get("/")

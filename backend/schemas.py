@@ -141,3 +141,69 @@ class FeatureTestCases(BaseModel):
 
 class ProjectWithGroupedTestCases(ProjectResponse):
     features: List[FeatureTestCases] = []
+
+
+# ---------------------------------------------------------------------------
+# Upload & Compare schemas
+# ---------------------------------------------------------------------------
+
+class FeatureMappingSuggestion(BaseModel):
+    uploaded_feature: str
+    suggested_project_feature: Optional[str] = None
+    similarity: float
+
+class ComparePreviewResponse(BaseModel):
+    uploaded_features: List[FeatureMappingSuggestion]
+    project_features: List[str]
+    total_cases: int
+    has_feature_column: bool
+
+class MatchedPair(BaseModel):
+    manual_title: str
+    ai_title: str
+    similarity: float
+
+class RedundantPair(BaseModel):
+    case_a: str
+    case_b: str
+    similarity: float
+
+class NearMissPair(BaseModel):
+    manual_title: str
+    closest_ai_title: str
+    similarity: float
+
+class FeatureGapReport(BaseModel):
+    feature_name: str
+    requirement_text: str
+    ai_cases_count: int
+    manual_cases_count: int
+    near_missed_ai_count: int       # unique AI cases partially covered by near-misses
+    exact_coverage_pct: float       # matched / ai_cases_count * 100
+    adjusted_coverage_pct: float    # (matched + near_missed_ai * 0.5) / ai_cases_count * 100
+    matched: List[MatchedPair]
+    near_misses: List[NearMissPair]
+    ai_only: List[str]              # AI cases with no match AND no near-miss
+    manual_only: List[str]
+    redundant_pairs: List[RedundantPair]
+
+class CompareReportSummary(BaseModel):
+    total_ai_cases: int
+    total_manual_cases: int
+    matched_count: int
+    near_miss_count: int            # manual cases classified as near-miss
+    near_missed_ai_count: int       # unique AI cases partially covered
+    ai_only_count: int
+    manual_only_count: int
+    redundant_count: int
+    exact_coverage_pct: float
+    adjusted_coverage_pct: float
+    unmapped_cases: int
+
+class CompareReport(BaseModel):
+    project_id: int
+    project_name: str
+    total_uploaded: int
+    features: List[FeatureGapReport]
+    unmapped_manual_cases: List[str]
+    summary: CompareReportSummary

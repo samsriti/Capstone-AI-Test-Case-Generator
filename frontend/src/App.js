@@ -8,6 +8,7 @@ import Signup from './components/Signup';
 import Dashboard from './components/Dashboard';
 import CreateProject from './components/CreateProject';
 import ProjectDetail from './components/ProjectDetail';
+import UploadCompare from './components/UploadCompare';
 import './App.css';
 
 // Protected Route Component
@@ -22,13 +23,13 @@ function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // On mount: verify the stored token is still valid
   useEffect(() => {
     const checkAuth = async () => {
       if (isAuthenticated()) {
         try {
           const response = await getCurrentUser();
           setUser(response.data);
-          initSessionManager();
         } catch (err) {
           console.error('Auth check failed:', err);
           localStorage.removeItem('token');
@@ -39,8 +40,17 @@ function App() {
     };
 
     checkAuth();
-    return () => cleanupSessionManager();
   }, []);
+
+  // Start/stop the session manager whenever the user logs in or out.
+  // Tying it to `user` state (not the mount effect) means React Strict Mode's
+  // double-invoke cannot silently kill the session manager mid-session.
+  useEffect(() => {
+    if (user) {
+      initSessionManager();
+      return () => cleanupSessionManager();
+    }
+  }, [user]);
 
   if (loading) {
     return <div className="loading">Loading...</div>;
@@ -91,6 +101,14 @@ function App() {
               element={
                 <ProtectedRoute user={user}>
                   <ProjectDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/projects/:projectId/compare"
+              element={
+                <ProtectedRoute user={user}>
+                  <UploadCompare />
                 </ProtectedRoute>
               }
             />

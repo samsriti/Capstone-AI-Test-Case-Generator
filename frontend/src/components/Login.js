@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { login, setAuthToken } from '../services/api';
+import { login, setAuthToken, initSessionManager } from '../services/api';
 
 function Login({ setUser }) {
   const [email, setEmail] = useState('');
@@ -18,12 +18,13 @@ function Login({ setUser }) {
       const response = await login(email, password);
       const token = response.data.access_token;
       setAuthToken(token);
-      
+
       // Fetch user info
       const { getCurrentUser } = require('../services/api');
       const userResponse = await getCurrentUser();
       setUser(userResponse.data);
-      
+
+      initSessionManager();
       navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed. Please try again.');

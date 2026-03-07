@@ -42,9 +42,13 @@ class TestCase(Base):
     
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)
-    type = Column(String, nullable=False)  # functional, negative, boundary, exploratory
+    type = Column(String, nullable=False)  # functional, negative, boundary, exploratory, security, integration, compliance, performance
+    priority = Column(String, nullable=True)   # critical, high, medium, low
     steps = Column(JSON, nullable=False)  # Store as JSON array
     expected_result = Column(Text, nullable=False)
+    test_data = Column(Text, nullable=True)         # Example test data values
+    dependencies = Column(Text, nullable=True)      # External systems/APIs required
+    compliance_note = Column(Text, nullable=True)   # Regulatory requirement being validated
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships

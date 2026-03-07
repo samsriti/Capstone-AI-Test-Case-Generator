@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getProject, deleteFeature } from '../services/api';
 import GenerateTestCases from './GenerateTestCases';
-import ConfirmDialog from './ConfirmDialog';  // Import ConfirmDialog
-import { MdDelete, MdSearch } from 'react-icons/md';
+import ConfirmDialog from './ConfirmDialog';
+import EditFeatureModal from './EditFeatureModal';
+import { MdDelete, MdEdit, MdSearch } from 'react-icons/md';
 import { useToast } from '../contexts/ToastContext';  // Import useToast
 
 function ProjectDetail() {
@@ -21,6 +22,7 @@ function ProjectDetail() {
   const [filterType, setFilterType] = useState('all'); // all, functional, negative, boundary, exploratory
 
   const [confirmDelete, setConfirmDelete] = useState(null);  // { featureName: string }
+  const [editFeature, setEditFeature] = useState(null);     // { feature_name, requirement_text }
 
   useEffect(() => {
     fetchProject();
@@ -51,8 +53,13 @@ function ProjectDetail() {
   };
 
 const handleDeleteFeature = async (featureName) => {
-    // Show confirmation dialog instead of window.confirm
     setConfirmDelete({ featureName });
+  };
+
+  const handleEditSuccess = (data) => {
+    setEditFeature(null);
+    fetchProject();
+    showToast(`Regenerated ${data.test_cases_count} test cases for "${data.feature_name}"`, 'success');
   };
 
   const confirmDeleteFeature = async () => {
@@ -336,6 +343,13 @@ const handleDeleteFeature = async (featureName) => {
                 </div>
                 
                 <button
+                  onClick={() => setEditFeature(feature)}
+                  className="edit-icon-button"
+                  title="Edit & regenerate this feature"
+                >
+                  <MdEdit size={20} />
+                </button>
+                <button
                   onClick={() => handleDeleteFeature(feature.feature_name)}
                   className="delete-icon-button"
                   title="Delete this feature"
@@ -449,6 +463,14 @@ const handleDeleteFeature = async (featureName) => {
           type="danger"
           onConfirm={confirmDeleteFeature}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+      {editFeature && (
+        <EditFeatureModal
+          feature={editFeature}
+          projectId={projectId}
+          onClose={() => setEditFeature(null)}
+          onSuccess={handleEditSuccess}
         />
       )}
     </div>

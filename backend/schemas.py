@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -58,18 +58,75 @@ class GenerateTestCasesRequest(BaseModel):
     feature_name: str  # e.g., "Login Feature"
     requirement_text: str  # The actual requirement
 
+    @field_validator("feature_name")
+    @classmethod
+    def validate_feature_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("feature_name cannot be empty")
+        if len(v) > 100:
+            raise ValueError("feature_name must be 100 characters or fewer")
+        return v
+
+    @field_validator("requirement_text")
+    @classmethod
+    def validate_requirement_text(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("requirement_text cannot be empty")
+        if len(v) > 3000:
+            raise ValueError(
+                "requirement_text must be 3000 characters or fewer. "
+                "Please split large requirements into smaller feature descriptions."
+            )
+        return v
+
+class RegenerateTestCasesRequest(BaseModel):
+    requirement_text: str
+    new_feature_name: Optional[str] = None
+
+    @field_validator("requirement_text")
+    @classmethod
+    def validate_requirement_text(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("requirement_text cannot be empty")
+        if len(v) > 3000:
+            raise ValueError(
+                "requirement_text must be 3000 characters or fewer. "
+                "Please split large requirements into smaller feature descriptions."
+            )
+        return v
+
+    @field_validator("new_feature_name")
+    @classmethod
+    def validate_new_feature_name(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 100:
+            raise ValueError("new_feature_name must be 100 characters or fewer")
+        return v
+
+
 class TestCaseResponse(BaseModel):
     id: int
     project_id: int
-    feature_name: str  # NEW
-    requirement_text: str  # NEW
+    feature_name: str
+    requirement_text: str
     title: str
     description: str
     type: str
+    priority: Optional[str] = None
     steps: List[str]
     expected_result: str
+    test_data: Optional[str] = None
+    dependencies: Optional[str] = None
+    compliance_note: Optional[str] = None
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

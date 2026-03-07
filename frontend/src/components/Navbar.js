@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { logout } from '../services/api';
+import { logout, cleanupSessionManager } from '../services/api';
 import { MdLogout, MdAdd } from 'react-icons/md';
 
 function Navbar({ user, setUser }) {
@@ -8,6 +8,7 @@ function Navbar({ user, setUser }) {
   const location = useLocation();
 
   const handleLogout = () => {
+    cleanupSessionManager();
     logout();
     setUser(null);
     navigate('/login');

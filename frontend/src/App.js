@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { getCurrentUser, isAuthenticated } from './services/api';
+import { getCurrentUser, isAuthenticated, initSessionManager, cleanupSessionManager } from './services/api';
 import { ToastProvider } from './contexts/ToastContext';  // Import ToastProvider
 import Navbar from './components/Navbar';
 import Login from './components/Login';
@@ -28,6 +28,7 @@ function App() {
         try {
           const response = await getCurrentUser();
           setUser(response.data);
+          initSessionManager();
         } catch (err) {
           console.error('Auth check failed:', err);
           localStorage.removeItem('token');
@@ -38,6 +39,7 @@ function App() {
     };
 
     checkAuth();
+    return () => cleanupSessionManager();
   }, []);
 
   if (loading) {

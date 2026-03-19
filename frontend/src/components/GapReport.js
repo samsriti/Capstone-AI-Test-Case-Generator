@@ -1,8 +1,47 @@
 import React, { useState } from 'react';
 import {
   MdCheckCircle, MdAutorenew, MdWarning, MdContentCopy,
-  MdExpandMore, MdExpandLess, MdBarChart, MdSwapHoriz,
+  MdExpandMore, MdExpandLess, MdBarChart, MdSwapHoriz, MdDownload,
 } from 'react-icons/md';
+
+// ── CSV helpers ────────────────────────────────────────────────────────────────
+
+function csvCell(v) { return `"${String(v ?? '').replace(/"/g, '""')}"`; }
+function csvRow(...cells) { return cells.map(csvCell).join(','); }
+
+function downloadCSV(filename, rows) {
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function featureToRows(feat) {
+  const exact    = `${feat.exact_coverage_pct.toFixed(1)}%`;
+  const adjusted = `${feat.adjusted_coverage_pct.toFixed(1)}%`;
+  const rows = [];
+  // Coverage summary row for this feature
+  rows.push(csvRow(feat.feature_name, 'Coverage Summary', `${feat.manual_cases_count} manual / ${feat.ai_cases_count} AI`, '', '', exact, adjusted));
+  feat.matched.forEach(m =>
+    rows.push(csvRow(feat.feature_name, 'Matched', m.manual_title, m.ai_title, `${(m.similarity * 100).toFixed(1)}%`, '', ''))
+  );
+  feat.near_misses.forEach(m =>
+    rows.push(csvRow(feat.feature_name, 'Near-miss', m.manual_title, m.closest_ai_title, `${(m.similarity * 100).toFixed(1)}%`, '', ''))
+  );
+  feat.ai_only.forEach(t =>
+    rows.push(csvRow(feat.feature_name, 'AI-only gap', '', t, '', '', ''))
+  );
+  feat.manual_only.forEach(t =>
+    rows.push(csvRow(feat.feature_name, 'Manual-only', t, '', '', '', ''))
+  );
+  feat.redundant_pairs.forEach(r =>
+    rows.push(csvRow(feat.feature_name, 'Redundant', r.case_a, r.case_b, `${(r.similarity * 100).toFixed(1)}%`, '', ''))
+  );
+  return rows;
+}
+
+const CSV_HEADER = csvRow('Feature', 'Category', 'Manual / Case A', 'AI / Case B', 'Similarity', 'Exact Coverage', 'Adjusted Coverage');
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -35,6 +74,12 @@ function Badge({ type, count }) {
 function FeatureSection({ feat }) {
   const [open, setOpen] = useState(feat.adjusted_coverage_pct < 80);
 
+  const handleDownload = (e) => {
+    e.stopPropagation();
+    const rows = [CSV_HEADER, ...featureToRows(feat)];
+    downloadCSV(`gap-report-${feat.feature_name.replace(/\s+/g, '_')}.csv`, rows);
+  };
+
   return (
     <div className="gr-feature">
       <button className="gr-feature-header" onClick={() => setOpen(o => !o)}>
@@ -61,6 +106,9 @@ function FeatureSection({ feat }) {
           </span>
           {open ? <MdExpandLess size={20} /> : <MdExpandMore size={20} />}
         </div>
+      </button>
+      <button className="gr-download-btn" onClick={handleDownload} title="Download this feature's report">
+        <MdDownload size={16} /> CSV
       </button>
 
       {open && (
@@ -173,6 +221,15 @@ function FeatureSection({ feat }) {
 function GapReport({ report, onRunAgain }) {
   const { summary, features, unmapped_manual_cases, project_name, total_uploaded } = report;
 
+  const handleDownloadFull = () => {
+    const rows = [CSV_HEADER];
+    features.forEach(feat => featureToRows(feat).forEach(r => rows.push(r)));
+    unmapped_manual_cases.forEach(t =>
+      rows.push(csvRow('Unmapped', 'Unmapped', t, '', ''))
+    );
+    downloadCSV(`gap-report-${project_name.replace(/\s+/g, '_')}.csv`, rows);
+  };
+
   const summaryCards = [
     {
       label: 'Exact coverage',
@@ -205,9 +262,14 @@ function GapReport({ report, onRunAgain }) {
             {total_uploaded} uploaded &bull; {summary.total_ai_cases} AI cases &bull; {features.length} feature{features.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button className="uc-submit-btn gr-rerun-btn" onClick={onRunAgain}>
-          Upload another file
-        </button>
+        <div className="gr-header-actions">
+          <button className="uc-submit-btn gr-rerun-btn" onClick={onRunAgain}>
+            Upload another file
+          </button>
+          <button className="uc-submit-btn gr-download-full-btn" onClick={handleDownloadFull}>
+            <MdDownload size={16} /> Download Report
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}

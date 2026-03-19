@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -49,6 +49,7 @@ class TestCase(Base):
     test_data = Column(Text, nullable=True)         # Example test data values
     dependencies = Column(Text, nullable=True)      # External systems/APIs required
     compliance_note = Column(Text, nullable=True)   # Regulatory requirement being validated
+    is_tested = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Relationships

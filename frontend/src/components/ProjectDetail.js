@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getProject, deleteFeature } from '../services/api';
+import { getProject, deleteFeature, toggleTestCaseTested, markAllFeatureTested } from '../services/api';
 import GenerateTestCases from './GenerateTestCases';
 import ConfirmDialog from './ConfirmDialog';
 import EditFeatureModal from './EditFeatureModal';
-import { MdDelete, MdEdit, MdSearch, MdCompare } from 'react-icons/md';
+import { MdDelete, MdEdit, MdSearch, MdCompare, MdCheckBox, MdCheckBoxOutlineBlank } from 'react-icons/md';
 import { useToast } from '../contexts/ToastContext';  // Import useToast
 
 function ProjectDetail() {
@@ -82,6 +82,40 @@ const handleDeleteFeature = async (featureName) => {
     });
   };
 
+  const handleToggleTested = async (testCaseId) => {
+    try {
+      const response = await toggleTestCaseTested(projectId, testCaseId);
+      const updated = response.data;
+      setProject(prev => ({
+        ...prev,
+        features: prev.features.map(feat => ({
+          ...feat,
+          test_cases: feat.test_cases.map(tc =>
+            tc.id === testCaseId ? { ...tc, is_tested: updated.is_tested } : tc
+          ),
+        })),
+      }));
+    } catch (err) {
+      showToast('Failed to update test status', 'error');
+    }
+  };
+
+  const handleMarkAllTested = async (featureName, isTested) => {
+    try {
+      await markAllFeatureTested(projectId, featureName, isTested);
+      setProject(prev => ({
+        ...prev,
+        features: prev.features.map(feat =>
+          feat.feature_name === featureName
+            ? { ...feat, test_cases: feat.test_cases.map(tc => ({ ...tc, is_tested: isTested })) }
+            : feat
+        ),
+      }));
+    } catch (err) {
+      showToast('Failed to update test statuses', 'error');
+    }
+  };
+
   const exportToJSON = () => {
     const dataStr = JSON.stringify(project, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -125,10 +159,14 @@ const handleDeleteFeature = async (featureName) => {
 
   const getTypeColor = (type) => {
     const colors = {
-      functional: '#4caf50',
-      negative: '#f44336',
-      boundary: '#ff9800',
-      exploratory: '#2196f3'
+      functional:  '#4caf50',
+      negative:    '#f44336',
+      boundary:    '#ff9800',
+      exploratory: '#2196f3',
+      security:    '#9c27b0',
+      integration: '#00bcd4',
+      compliance:  '#795548',
+      performance: '#607d8b',
     };
     return colors[type] || '#667eea';
   };
@@ -348,6 +386,21 @@ const handleDeleteFeature = async (featureName) => {
                   </span>
                 </div>
                 
+                {(() => {
+                  const allTested = feature.test_cases.length > 0 &&
+                    feature.test_cases.every(tc => tc.is_tested);
+                  return (
+                    <button
+                      onClick={() => handleMarkAllTested(feature.feature_name, !allTested)}
+                      className={`mark-all-btn${allTested ? ' mark-all-btn--undo' : ''}`}
+                      title={allTested ? 'Unmark all as tested' : 'Mark all as tested'}
+                    >
+                      {allTested
+                        ? <><MdCheckBox size={16} /> Unmark all</>
+                        : <><MdCheckBoxOutlineBlank size={16} /> Mark all tested</>}
+                    </button>
+                  );
+                })()}
                 <button
                   onClick={() => setEditFeature(feature)}
                   className="edit-icon-button"
@@ -373,13 +426,13 @@ const handleDeleteFeature = async (featureName) => {
 
                   {/* Test Type Distribution */}
                   <div className="test-type-stats">
-                    {['functional', 'negative', 'boundary', 'exploratory'].map(type => {
+                    {['functional', 'negative', 'boundary', 'exploratory', 'security', 'integration', 'compliance', 'performance'].map(type => {
                       const count = feature.test_cases.filter(tc => tc.type === type).length;
                       if (count === 0) return null;
                       return (
                         <div key={type} className="type-stat">
-                          <span 
-                            className="type-dot" 
+                          <span
+                            className="type-dot"
                             style={{ backgroundColor: getTypeColor(type) }}
                           />
                           <span className="type-label">{type}: {count}</span>
@@ -388,25 +441,59 @@ const handleDeleteFeature = async (featureName) => {
                     })}
                   </div>
 
+                  {/* Coverage Progress */}
+                  {(() => {
+                    const total  = feature.test_cases.length;
+                    const tested = feature.test_cases.filter(tc => tc.is_tested).length;
+                    const pct    = total > 0 ? Math.round((tested / total) * 100) : 0;
+                    const color  = pct >= 75 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
+                    return (
+                      <div className="coverage-progress">
+                        <div className="coverage-progress-label">
+                          <span>Test Coverage</span>
+                          <span>{tested} / {total} tested ({pct}%)</span>
+                        </div>
+                        <div className="coverage-progress-track">
+                          <div
+                            className="coverage-progress-fill"
+                            style={{ width: `${pct}%`, background: color }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Test Cases Grid */}
                   <div className="test-cases-grid">
                     {feature.test_cases.map((testCase) => (
-                      <div 
-                        key={testCase.id} 
-                        className="test-case-card"
+                      <div
+                        key={testCase.id}
+                        className={`test-case-card${testCase.is_tested ? ' test-case-card--tested' : ''}`}
                         style={{ borderLeftColor: getTypeColor(testCase.type) }}
                       >
                         <div className="test-case-header">
                           <h3>{testCase.title}</h3>
-                          <span 
-                            className="test-type-badge"
-                            style={{
-                              backgroundColor: `${getTypeColor(testCase.type)}20`,
-                              color: getTypeColor(testCase.type)
-                            }}
-                          >
-                            {testCase.type}
-                          </span>
+                          <div className="test-case-header-right">
+                            <span
+                              className="test-type-badge"
+                              style={{
+                                backgroundColor: `${getTypeColor(testCase.type)}20`,
+                                color: getTypeColor(testCase.type)
+                              }}
+                            >
+                              {testCase.type}
+                            </span>
+                            <button
+                              className={`tested-toggle${testCase.is_tested ? ' tested-toggle--done' : ''}`}
+                              onClick={() => handleToggleTested(testCase.id)}
+                              title={testCase.is_tested ? 'Mark as not tested' : 'Mark as tested'}
+                            >
+                              {testCase.is_tested
+                                ? <MdCheckBox size={20} />
+                                : <MdCheckBoxOutlineBlank size={20} />}
+                              {testCase.is_tested ? 'Tested' : 'Mark tested'}
+                            </button>
+                          </div>
                         </div>
 
                         <p className="test-description">

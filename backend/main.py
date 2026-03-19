@@ -31,6 +31,7 @@ _NEW_COLUMNS = [
     "ALTER TABLE test_cases ADD COLUMN test_data TEXT",
     "ALTER TABLE test_cases ADD COLUMN dependencies TEXT",
     "ALTER TABLE test_cases ADD COLUMN compliance_note TEXT",
+    "ALTER TABLE test_cases ADD COLUMN is_tested INTEGER NOT NULL DEFAULT 0",
 ]
 with engine.connect() as _conn:
     for _stmt in _NEW_COLUMNS:
@@ -700,6 +701,52 @@ def delete_feature_test_cases(
     return {
         "message": f"Deleted {deleted_count} test cases for feature '{feature_name}'"
     }
+
+@app.patch("/projects/{project_id}/features/{feature_name}/mark-all-tested")
+def mark_all_feature_tested(
+    project_id: int,
+    feature_name: str,
+    is_tested: bool,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set is_tested on every test case in a feature to the given value."""
+    project = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.user_id == current_user.id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    db.query(models.TestCase).filter(
+        models.TestCase.project_id == project_id,
+        models.TestCase.feature_name == feature_name,
+    ).update({"is_tested": is_tested})
+    db.commit()
+    return {"message": f"Marked all test cases as {'tested' if is_tested else 'untested'}"}
+
+
+@app.patch("/projects/{project_id}/test-cases/{test_case_id}/tested",
+           response_model=schemas.TestCaseResponse)
+def toggle_test_case_tested(
+    project_id: int,
+    test_case_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Toggle the is_tested flag on a single test case."""
+    tc = db.query(models.TestCase).join(models.Project).filter(
+        models.TestCase.id == test_case_id,
+        models.TestCase.project_id == project_id,
+        models.Project.user_id == current_user.id,
+    ).first()
+    if not tc:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    tc.is_tested = not tc.is_tested
+    db.commit()
+    db.refresh(tc)
+    return tc
+
 
 @app.put("/projects/{project_id}/features/{feature_name}/regenerate")
 async def regenerate_feature_test_cases(

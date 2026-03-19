@@ -84,6 +84,12 @@ export const deleteFeature = (projectId, featureName) =>
 export const regenerateTestCases = (projectId, featureName, data) =>
   api.put(`/projects/${projectId}/features/${encodeURIComponent(featureName)}/regenerate`, data);
 
+export const toggleTestCaseTested = (projectId, testCaseId) =>
+  api.patch(`/projects/${projectId}/test-cases/${testCaseId}/tested`);
+
+export const markAllFeatureTested = (projectId, featureName, isTested) =>
+  api.patch(`/projects/${projectId}/features/${encodeURIComponent(featureName)}/mark-all-tested?is_tested=${isTested}`);
+
 export const previewCompare = (projectId, file) => {
   const formData = new FormData();
   formData.append('file', file);

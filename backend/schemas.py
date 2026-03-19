@@ -125,6 +125,7 @@ class TestCaseResponse(BaseModel):
     test_data: Optional[str] = None
     dependencies: Optional[str] = None
     compliance_note: Optional[str] = None
+    is_tested: bool = False
     created_at: datetime
 
     class Config:
